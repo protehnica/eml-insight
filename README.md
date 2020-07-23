@@ -1,7 +1,7 @@
 # eml-insight
 A command-line tool that analyzes the source code of emails in order to give you insight about their senders.
 
-The script is strictly a passive analyzer doesn't take any action.
+The script is strictly a passive analyzer. It doesn't take any action.
 
 # how it works
 - It looks at the headers of the email and identifies the network hops it took
