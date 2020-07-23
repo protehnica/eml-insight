@@ -5,14 +5,19 @@ import subprocess
 import sys
 from email import message_from_string
 from pathlib import Path
+from typing import List, Generator, Tuple
 from urllib import request
 import time
 
 
 #
-# headers
+# header parsing generator, produces a key-value tuple
 #
-def parse_headers(text: str):
+# https://docs.python.org/3/library/typing.html
+# If your generator will only yield values, set the SendType and ReturnType to None
+#
+
+def parse_headers(text: str) -> Generator[Tuple[str, str], None, None]:
     text = text.replace("\r", "")
     headers = text.split("\n\n")[0]
     headers = re.sub(r'\n[\s]+', ' ', headers)
@@ -24,7 +29,7 @@ def parse_headers(text: str):
 
 
 #
-# caches
+# caching mechanism
 #
 
 NOW = time.time()
@@ -95,11 +100,14 @@ def extreme_lookup_ip(ip: str) -> str:
 # abuse emails extraction
 #
 
-def extract_abuse_emails(text: str) -> list:
+# https://www.tutorialspoint.com/Extracting-email-addresses-using-regular-expressions-in-Python
+EMAIL_REGEX = r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)"
+
+
+def extract_abuse_emails(text: str) -> List[str]:
     emails = []
 
-    # https://www.tutorialspoint.com/Extracting-email-addresses-using-regular-expressions-in-Python
-    extracted = re.findall(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", text)
+    extracted = re.findall(EMAIL_REGEX, text)
     for email in extracted:
         if email.endswith("."):
             email = email[:-1]
@@ -120,13 +128,15 @@ def decode_stdout(b: bytes) -> str or None:
 def perform_whois_live(ip: str) -> str:
     whois_result = subprocess.run(["whois", ip], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     text = decode_stdout(whois_result.stdout)
+
     if text is None:
         print("Unable to decode WHOIS response for {0}".format(ip))
         exit(0)
+
     return text
 
 
-def get_abuse_emails(ip: str) -> list:
+def get_abuse_emails(ip: str) -> List[str]:
     path = get_whois_path(ip)
     text = cached_or(path, lambda: perform_whois_live(ip))
     return extract_abuse_emails(text)
@@ -137,16 +147,14 @@ def get_abuse_emails(ip: str) -> list:
 # regular expressions: https://gist.github.com/mnordhoff/2213179
 #
 
-ps = [
-    '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}',
-    '(?:(?:[0-9A-Fa-f]{1,4}:){6}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|::(?:[0-9A-Fa-f]{1,4}:){5}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){4}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){3}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,2}[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){2}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,3}[0-9A-Fa-f]{1,4})?::[0-9A-Fa-f]{1,4}:(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,4}[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,5}[0-9A-Fa-f]{1,4})?::[0-9A-Fa-f]{1,4}|(?:(?:[0-9A-Fa-f]{1,4}:){,6}[0-9A-Fa-f]{1,4})?::)'
-]
-
-rs = [re.compile(p) for p in ps]
+IP_REGEXES = [re.compile(p) for p in [
+    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}',
+    r'(?:(?:[0-9A-Fa-f]{1,4}:){6}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|::(?:[0-9A-Fa-f]{1,4}:){5}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){4}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){3}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,2}[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){2}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,3}[0-9A-Fa-f]{1,4})?::[0-9A-Fa-f]{1,4}:(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,4}[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(?:(?:[0-9A-Fa-f]{1,4}:){,5}[0-9A-Fa-f]{1,4})?::[0-9A-Fa-f]{1,4}|(?:(?:[0-9A-Fa-f]{1,4}:){,6}[0-9A-Fa-f]{1,4})?::)'
+]]
 
 
-def extract_ips(s: str) -> list:
-    nested = [x for x in (r.findall(s) for r in rs)]
+def extract_ips(s: str) -> List[str]:
+    nested = [x for x in (r.findall(s) for r in IP_REGEXES)]
     return list(set(itertools.chain.from_iterable(nested)))
 
 
@@ -157,7 +165,7 @@ def is_public_ip(ip: str) -> bool:
 
 
 #
-# Header analysis
+# header analysis
 #
 
 def header_contains_ip(k: str, v: str) -> bool:
@@ -177,6 +185,7 @@ def is_spf_pass(k: str, v: str) -> bool:
 #
 # String operations
 #
+
 STD_SIZE = 32
 
 
@@ -190,9 +199,9 @@ def print_title(s: str) -> None:
     size = max(STD_SIZE, len(text))
 
     print()
-    print("╔" + "═" * size + "╗")
-    print("║" + text + "║")
-    print("╚" + "═" * size + "╝")
+    print("╔{0}╗".format("═" * size))
+    print("║{0}║".format(text))
+    print("╚{0}╝".format("═" * size))
 
 
 # http://patorjk.com/software/taag/#p=display&f=ANSI%20Shadow&t=EML
@@ -206,12 +215,11 @@ def print_intro() -> None:
     ╚══════╝╚═╝     ╚═╝╚══════╝""")
 
 
-"""
-Main
-"""
+#
+# main routine
+#
 
-
-def main():
+def main() -> None:
     #
     # parameter check
     #
