@@ -111,6 +111,7 @@ CERT = {
     "RO": ["office@cert.ro"],
     "BY": ["support@cert.by"],
     "HR": ["ncert@cert.hr"],
+    "BR": ["cert@cert.br"],
     "ME": ["kontakt@cirt.me"],
     "CN": ["cncert@cert.org.cn"],
     "CY": ["info@csirt.cy"],
@@ -196,6 +197,31 @@ def get_abuse_emails(ip: str) -> List[str]:
 
 
 #
+# WHOIS
+#
+
+WHOIS_FIELDS = ["descr:", "netname:", "org-name:", "role:", "address:"]
+
+
+def get_whois_info(ip: str) -> Dict[str, List[str]]:
+    path = get_whois_path(ip)
+    text = cached_or(path, lambda: perform_whois_live(ip))
+
+    result: Dict[str, List[str]] = {}
+
+    lines: List[str] = text.split("\n")
+    for line in lines:
+        if not any(f in line for f in WHOIS_FIELDS):
+            continue
+        [k, v] = list(map(lambda s: s.strip(), line.split(":", 1)))
+        if k not in result:
+            result[k] = []
+        result[k].append(v)
+
+    return result
+
+
+#
 # IPs
 # regular expressions: https://gist.github.com/mnordhoff/2213179
 #
@@ -215,6 +241,10 @@ def is_public_ip(ip: str) -> bool:
     return ip != "127.0.0.1" \
            and not ip.startswith("192.168") \
            and not ip.startswith("10.0")
+
+
+def is_ipv4(ip: str) -> bool:
+    return "." in ip
 
 
 #
@@ -295,7 +325,7 @@ def print_table(data: List[List[str]]) -> None:
     print(end_border)
 
 
-def print_dict(d: Dict[str, str]) -> None:
+def print_dict(d: Dict[str, str or List[str]]) -> None:
     pad = 0
     for k in d.keys():
         if (l := len(k)) > pad:
@@ -377,10 +407,6 @@ def main() -> None:
                 special_headers_google_apps.add(google_app[0])
 
             if header_contains_ip(k, v):
-                if header_is_webmail(v) and not is_spf_pass(k, v):
-                    webmail_hops.append([k, v])
-                    continue
-
                 ips = extract_ips(v)
                 ips = list(filter(is_public_ip, ips))
 
@@ -389,6 +415,10 @@ def main() -> None:
                     continue
 
                 for ip in ips:
+                    if header_is_webmail(v) and not is_ipv4(ip):
+                        webmail_hops.append([k, v])
+                        continue
+
                     if ip not in sender_hops:
                         sender_hops[ip] = []
                     sender_hops[ip].append([k, v])
@@ -409,6 +439,7 @@ def main() -> None:
     #
     # IPs
     #
+
     if len(sender_hops) > 0:
         print_title("IPs")
         ip_dates: Dict[str, str] = {}
@@ -417,6 +448,8 @@ def main() -> None:
                 if BY_SEPARATOR in v:
                     date = v.split(BY_SEPARATOR)[1]
                     ip_dates[ip] = date.strip()
+            if ip not in ip_dates:
+                ip_dates[ip] = headers
         print_dict(ip_dates)
         # print_table([[k, v] for [k, v] in ip_dates.items()])
 
@@ -431,7 +464,7 @@ def main() -> None:
         })
 
         # if IPV4, lookup API
-        if "." in ip:
+        if is_ipv4(ip):
             lookup = extreme_lookup_ip(ip)
 
             if "countryCode" in lookup:
@@ -440,12 +473,19 @@ def main() -> None:
                     print_dict({"CC": ', '.join(cert)})
 
             print()
-            print("API:")
+            print("API [eXTReMe-IP-Lookup]:")
             print_dict(lookup)
 
-        # extra IP info URLs
+        # WHOIS info
+        whois = get_whois_info(ip)
+        if len(whois) > 0:
+            print()
+            print("WHOIS info:")
+            print_dict(whois)
+
+        # URLs with external resources
         print()
-        print("IP info")
+        print("External resources:")
         print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
 
         # headers
