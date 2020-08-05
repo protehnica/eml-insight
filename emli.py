@@ -118,7 +118,7 @@ CERT = {
     "CZ": ["abuse@csirt.cz"],
     "CO": ["ponal.csirt@policia.gov.co"],
     "EG": ["incident@egcert.eg"],
-    "UK": ["incidents@ncsc.gov.uk"],
+    "GB": ["incidents@ncsc.gov.uk"],
     "KE": ["incidents@ke-cirt.go.ke"],
     "HU": ["team@nki.gov.hu"],
     "FI": ["cert@ncsc.fi"],
@@ -140,7 +140,6 @@ CERT = {
     "HK": ["cert@govcert.gov.hk"],
     "MT": ["securityoperations.mita@gov.mt"],
     "DK": ["cert@cert.dk"],
-    # "": [""],
     # "": [""],
 }
 
