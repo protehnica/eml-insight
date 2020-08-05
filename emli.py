@@ -1,11 +1,12 @@
 import itertools
+import json
 import os
 import re
 import subprocess
 import sys
 from email import message_from_string
 from pathlib import Path
-from typing import List, Generator, Tuple
+from typing import List, Generator, Tuple, Dict
 from urllib import request
 import time
 
@@ -91,9 +92,61 @@ def extreme_lookup_ip_live(ip: str) -> str:
     return contents
 
 
-def extreme_lookup_ip(ip: str) -> str:
+def extreme_lookup_ip(ip: str) -> Dict[str, str]:
     path = get_extreme_ip_lookup_path(ip)
-    return cached_or(path, lambda: extreme_lookup_ip_live(ip))
+    j = cached_or(path, lambda: extreme_lookup_ip_live(ip))
+    return json.loads(j)
+
+
+#
+# CERT emails
+# https://www.first.org/members/teams/
+#
+
+CERT = {
+    "DE": ["allgemeiner-spam@internet-beschwerdestelle.de", "besonderer-spam@internet-beschwerdestelle.de"],
+    "ZA": ["ecs-csirt@ssa.gov.za"],
+    "ES": ["info@ccn-cert.cni.es", "incidencias@incibe-cert.es"],
+    "IP": ["team@cyber.gov.il"],
+    "RO": ["office@cert.ro"],
+    "BY": ["support@cert.by"],
+    "HR": ["ncert@cert.hr"],
+    "ME": ["kontakt@cirt.me"],
+    "CN": ["cncert@cert.org.cn"],
+    "CY": ["info@csirt.cy"],
+    "CZ": ["abuse@csirt.cz"],
+    "CO": ["ponal.csirt@policia.gov.co"],
+    "EG": ["incident@egcert.eg"],
+    "UK": ["incidents@ncsc.gov.uk"],
+    "KE": ["incidents@ke-cirt.go.ke"],
+    "HU": ["team@nki.gov.hu"],
+    "FI": ["cert@ncsc.fi"],
+    "NL": ["cert@ncsc.nl"],
+    "NO": ["post@cert.no"],
+    "CH": ["incidents@ncsc.ch"],
+    "KR": ["nirscert@korea.kr", "kn-cert@ncsc.go.kr"],
+    "JP": ["first-team@nisc.go.jp"],
+    "LT": ["cert@cert.lt"],
+    "OM": ["ocert999@ita.gov.om"],
+    "RS": ["office@cert.rs"],
+    "TR": ["trcert@usom.gov.tr"],
+    "TW": ["twncert@twncert.org.tw"],
+    "NG": ["incident@cert.gov.ng"],
+    "IL": ["csirt@cio.gov.il"],
+    "AZ": ["team@cert.gov.az"],
+    "AE": ["securityoperations@adgovcert.abudhabi.ae"],
+    "BD": ["cirt@cirt.gov.bd"],
+    "HK": ["cert@govcert.gov.hk"],
+    "MT": ["securityoperations.mita@gov.mt"],
+    "DK": ["cert@cert.dk"],
+    # "": [""],
+    # "": [""],
+}
+
+
+def cert_country(country: str) -> str or None:
+    if country in CERT:
+        return "- {0}".format(', '.join(CERT[country]))
 
 
 #
@@ -305,13 +358,23 @@ def main() -> None:
         for [k, v] in headers:
             print("- {0} {1}".format(k, v))
 
-        print()
-        print("API:")
-        lookup = extreme_lookup_ip(ip)
-        print(lookup)
+        # IPV4
+        if "." in ip:
+            print()
+            print("API:")
+            lookup = extreme_lookup_ip(ip)
+            for k, v in lookup.items():
+                print("- {0} {1}".format(k.ljust(19, "."), v))
+
+            if "countryCode" in lookup:
+                cert = cert_country(lookup["countryCode"])
+                if cert is not None:
+                    print()
+                    print("CERT")
+                    print(cert)
 
         print()
-        print("Extra")
+        print("IP info")
         print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
 
         separator()
