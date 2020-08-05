@@ -256,7 +256,7 @@ def main() -> None:
         m = message_from_string(data)
 
         for k, v in parse_headers(data):
-            v = re.sub(r' by .*', '', v).strip()
+            v = re.sub(r' by .*;', ' [BY];', v).strip()
 
             google_app = re.compile('=([^=]*.gappssmtp.com)').findall(v)
             if len(google_app) > 0:
@@ -310,13 +310,19 @@ def main() -> None:
         lookup = extreme_lookup_ip(ip)
         print(lookup)
 
+        print()
+        print("Extra")
+        print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
+
         separator()
 
     #
     # from
     #
-    print_title("From")
-    print(m["from"])
+    print_title("From & Return-Path")
+    print("""- {0}
+- {1}
+""".format(m["from"], m["Return-Path"]))
 
     #
     # webmail hops
