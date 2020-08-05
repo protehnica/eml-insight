@@ -144,9 +144,9 @@ CERT = {
 }
 
 
-def cert_country(country: str) -> str or None:
+def cert_country(country: str) -> List[str] or None:
     if country in CERT:
-        return "- {0}".format(', '.join(CERT[country]))
+        return CERT[country]
 
 
 #
@@ -349,34 +349,36 @@ def main() -> None:
         print_title("IPs")
 
     for [ip, headers] in sender_hops.items():
+
         emails = set(get_abuse_emails(ip))
         print("TO: {0}".format(', '.join(emails)))
+
         print("IP: {0}".format(ip))
+
+        # IPV4
+        if "." in ip:
+            lookup = extreme_lookup_ip(ip)
+
+            if "countryCode" in lookup:
+                cert = cert_country(lookup["countryCode"])
+                if cert is not None:
+                    print("CC: {0}".format(', '.join(cert)))
+
+            print()
+            print("API:")
+            for k, v in lookup.items():
+                print("- {0} {1}".format(k.ljust(19, "."), v))
+
+        print()
+        print("IP info")
+        print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
 
         print()
         print("Headers:")
         for [k, v] in headers:
             print("- {0} {1}".format(k, v))
 
-        # IPV4
-        if "." in ip:
-            print()
-            print("API:")
-            lookup = extreme_lookup_ip(ip)
-            for k, v in lookup.items():
-                print("- {0} {1}".format(k.ljust(19, "."), v))
-
-            if "countryCode" in lookup:
-                cert = cert_country(lookup["countryCode"])
-                if cert is not None:
-                    print()
-                    print("CERT")
-                    print(cert)
-
         print()
-        print("IP info")
-        print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
-
         separator()
 
     #
