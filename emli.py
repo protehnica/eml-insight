@@ -239,17 +239,79 @@ def is_spf_pass(k: str, v: str) -> bool:
 # String operations
 #
 
-STD_SIZE = 32
+TITLE_SIZE = 32
+BY_SEPARATOR = ' [BY];'
 
 
 def separator() -> None:
-    print("═" * (STD_SIZE + 2))
+    print("═" * (TITLE_SIZE + 2))
+
+
+V_BAR = "│"
+H_BAR = "─"
+
+
+def print_table(data: List[List[str]]) -> None:
+    if len(data) == 0:
+        return None
+
+    lengths: Dict[int, int] = {}
+
+    for row in data:
+        i = 0
+        for cell in row:
+            row[i] = cell = " {0} ".format(cell)
+
+            length = len(cell)
+            if i not in lengths:
+                lengths[i] = length
+            else:
+                if length > lengths[i]:
+                    lengths[i] = length
+            i += 1
+
+    top_border = "┌{0}┐".format("┬".join(map(lambda s: "".ljust(s, H_BAR), lengths.values())))
+    mid_border = "├{0}┤".format("┼".join(map(lambda s: "".ljust(s, H_BAR), lengths.values())))
+    end_border = "└{0}┘".format("┴".join(map(lambda s: "".ljust(s, H_BAR), lengths.values())))
+
+    print(top_border)
+
+    i = 0
+    rows = len(data)
+
+    for row in data:
+        cells = {k: v for k, v in enumerate(row)}
+        draw = "{0}{1}{2}".format(
+            V_BAR,
+            V_BAR.join(map(lambda k: cells[k].ljust(lengths[k]), cells.keys())),
+            V_BAR
+        )
+        print(draw)
+
+        if 0 <= i < rows - 1:
+            print(mid_border)
+        i += 1
+
+    print(end_border)
+
+
+def print_dict(d: Dict[str, str]) -> None:
+    pad = 0
+    for k in d.keys():
+        if (l := len(k)) > pad:
+            pad = l
+
+    pad += 5
+
+    for k, v in d.items():
+        key = "{0} ".format(k)
+        print("- {0} {1}".format(key.ljust(pad, "·"), v))
 
 
 # https://theasciicode.com.ar/extended-ascii-code/box-drawing-character-single-line-lower-left-corner-ascii-code-192.html
 def print_title(s: str) -> None:
-    text = " {0} ".format(s).ljust(STD_SIZE, " ")
-    size = max(STD_SIZE, len(text))
+    text = " {0} ".format(s).ljust(TITLE_SIZE, " ")
+    size = max(TITLE_SIZE, len(text))
 
     print()
     print("╔{0}╗".format("═" * size))
@@ -295,10 +357,9 @@ def main() -> None:
     headers_false_negative = []
     headers_false_positive = []
 
-    special_headers_spf = []
     special_headers_google_apps = set()
 
-    sender_hops = {}
+    sender_hops: Dict[str, List[List[str]]] = {}
     webmail_hops = []
 
     #
@@ -309,16 +370,13 @@ def main() -> None:
         m = message_from_string(data)
 
         for k, v in parse_headers(data):
-            v = re.sub(r' by .*;', ' [BY];', v).strip()
+            v = re.sub(r' by .*;', BY_SEPARATOR, v).strip()
 
             google_app = re.compile('=([^=]*.gappssmtp.com)').findall(v)
             if len(google_app) > 0:
                 special_headers_google_apps.add(google_app[0])
 
             if header_contains_ip(k, v):
-                if is_spf_pass(k, v):
-                    special_headers_spf.append([k, v])
-
                 if header_is_webmail(v) and not is_spf_pass(k, v):
                     webmail_hops.append([k, v])
                     continue
@@ -343,51 +401,67 @@ def main() -> None:
                     headers_true_negative.append(k)
 
     #
+    # from
+    #
+    print_title("From & Return-Path")
+    print_dict({f: m[f] for f in ["from", "return-path"]})
+
+    #
     # IPs
     #
     if len(sender_hops) > 0:
         print_title("IPs")
+        ip_dates: Dict[str, str] = {}
+        for [ip, headers] in sender_hops.items():
+            for [_, v] in headers:
+                if BY_SEPARATOR in v:
+                    date = v.split(BY_SEPARATOR)[1]
+                    ip_dates[ip] = date.strip()
+        print_dict(ip_dates)
+        # print_table([[k, v] for [k, v] in ip_dates.items()])
 
     for [ip, headers] in sender_hops.items():
 
+        print_title(ip)
+
         emails = set(get_abuse_emails(ip))
-        print("TO: {0}".format(', '.join(emails)))
+        print_dict({
+            "TO": ', '.join(emails),
+            "IP": ip
+        })
 
-        print("IP: {0}".format(ip))
-
-        # IPV4
+        # if IPV4, lookup API
         if "." in ip:
             lookup = extreme_lookup_ip(ip)
 
             if "countryCode" in lookup:
                 cert = cert_country(lookup["countryCode"])
                 if cert is not None:
-                    print("CC: {0}".format(', '.join(cert)))
+                    print_dict({"CC": ', '.join(cert)})
 
             print()
             print("API:")
-            for k, v in lookup.items():
-                print("- {0} {1}".format(k.ljust(19, "."), v))
+            print_dict(lookup)
 
+        # extra IP info URLs
         print()
         print("IP info")
         print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
 
+        # headers
+        spf = False
         print()
         print("Headers:")
+        print_dict({k: v for [k, v] in headers})
+
+        # SPF
         for [k, v] in headers:
-            print("- {0} {1}".format(k, v))
+            if is_spf_pass(k, v):
+                spf = True
 
-        print()
-        separator()
-
-    #
-    # from
-    #
-    print_title("From & Return-Path")
-    print("""- {0}
-- {1}
-""".format(m["from"], m["Return-Path"]))
+        if spf:
+            print()
+            print("SPF passes")
 
     #
     # webmail hops
@@ -406,13 +480,6 @@ def main() -> None:
         print(special_headers_google_apps)
 
     #
-    # SPF
-    #
-    if len(special_headers_spf) > 0:
-        print_title("SPECIAL :: SPF")
-        print(special_headers_spf)
-
-    #
     # false positives
     #
     if len(headers_false_positive) > 0:
@@ -425,8 +492,7 @@ def main() -> None:
     #
     if len(headers_false_negative) > 0:
         print_title("False negative headers [{0}]".format(len(headers_false_negative)))
-        for k, v in headers_false_negative:
-            print("- {0}: {1}".format(k, v))
+        print_dict({k: v for k, v in headers_false_negative})
 
     #
     # true negatives
