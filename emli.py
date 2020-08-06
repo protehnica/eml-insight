@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import OrderedDict
 from email import message_from_string
 from pathlib import Path
 from typing import List, Generator, Tuple, Dict
@@ -388,7 +389,7 @@ def main() -> None:
 
     special_headers_google_apps = set()
 
-    sender_hops: Dict[str, List[List[str]]] = {}
+    sender_hops: OrderedDict[str, List[List[str]]] = OrderedDict()
     webmail_hops = []
 
     #
@@ -414,9 +415,9 @@ def main() -> None:
                     continue
 
                 for ip in ips:
-                    if header_is_webmail(v) and not is_ipv4(ip):
-                        webmail_hops.append([k, v])
-                        continue
+                    # if header_is_webmail(v) and not is_ipv4(ip):
+                    #     webmail_hops.append([k, v])
+                    #     continue
 
                     if ip not in sender_hops:
                         sender_hops[ip] = []
@@ -428,6 +429,9 @@ def main() -> None:
                     headers_false_negative.append([k, v])
                 else:
                     headers_true_negative.append(k)
+
+    # reversing IP order
+    sender_hops = OrderedDict(reversed(list(sender_hops.items())))
 
     #
     # from
@@ -453,7 +457,6 @@ def main() -> None:
         # print_table([[k, v] for [k, v] in ip_dates.items()])
 
     for [ip, headers] in sender_hops.items():
-
         print_title(ip)
 
         emails = set(get_abuse_emails(ip))
