@@ -141,6 +141,7 @@ CERT = {
     "HK": ["cert@govcert.gov.hk"],
     "MT": ["securityoperations.mita@gov.mt"],
     "DK": ["cert@cert.dk"],
+    "PL": ["cert@cert.pl"],
     # "": [""],
 }
 
@@ -266,7 +267,7 @@ def is_spf_pass(k: str, v: str) -> bool:
 
 
 #
-# String operations
+# string operations
 #
 
 TITLE_SIZE = 32
@@ -307,8 +308,6 @@ def print_table(data: List[List[str]]) -> None:
     print(top_border)
 
     i = 0
-    rows = len(data)
-
     for row in data:
         cells = {k: v for k, v in enumerate(row)}
         draw = "{0}{1}{2}".format(
@@ -318,7 +317,7 @@ def print_table(data: List[List[str]]) -> None:
         )
         print(draw)
 
-        if 0 <= i < rows - 1:
+        if i == 0:
             print(mid_border)
         i += 1
 
@@ -454,10 +453,22 @@ def main() -> None:
             if ip not in ip_dates:
                 ip_dates[ip] = headers
         print_dict(ip_dates)
-        # print_table([[k, v] for [k, v] in ip_dates.items()])
 
     for [ip, headers] in sender_hops.items():
-        print_title(ip)
+        if not is_ipv4(ip):
+            continue
+
+        # flags
+        spf = any(is_spf_pass(k, v) for [k, v] in headers)
+        real = any(BY_SEPARATOR in v for [_, v] in headers)
+
+        # title
+        title = ip
+        if spf:
+            title = "{0} [SPF]".format(title)
+        if not real:
+            title = "{0} [FORGED]".format(title)
+        print_title(title)
 
         emails = set(get_abuse_emails(ip))
         print_dict({
@@ -491,19 +502,9 @@ def main() -> None:
         print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
 
         # headers
-        spf = False
         print()
         print("Headers:")
         print_dict({k: v for [k, v] in headers})
-
-        # SPF
-        for [k, v] in headers:
-            if is_spf_pass(k, v):
-                spf = True
-
-        if spf:
-            print()
-            print("SPF passes")
 
     #
     # webmail hops
