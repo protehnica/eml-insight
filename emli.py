@@ -7,9 +7,12 @@ import sys
 from collections import OrderedDict
 from email import message_from_string
 from pathlib import Path
-from typing import List, Generator, Tuple, Dict
+from typing import Generator, Callable
 from urllib import request
 import time
+from colorama import init, Fore, Back
+
+init(autoreset=True)
 
 
 #
@@ -19,15 +22,18 @@ import time
 # If your generator will only yield values, set the SendType and ReturnType to None
 #
 
-def parse_headers(text: str) -> Generator[Tuple[str, str], None, None]:
+def parse_headers(text: str) -> Generator[tuple[str, str], None, None]:
     text = text.replace("\r", "")
     headers = text.split("\n\n")[0]
     headers = re.sub(r'\n[\s]+', ' ', headers)
     lines = headers.split("\n")
 
     for line in lines:
-        k, v = line.lower().split(":", maxsplit=1)
-        yield k, v
+        try:
+            k, v = line.lower().split(":", maxsplit=1)
+            yield k, v
+        except ValueError:
+            pass
 
 
 #
@@ -49,7 +55,7 @@ def read_cached(path: str) -> str or None:
 
     age = int(os.path.getmtime(path))
     if age < CUTOFF:
-        print("File existed, but was older: {0}".format(path))
+        # print("File existed, but was older: {0}".format(path))
         return None
 
     with open(file=path, encoding="UTF-8", mode="r") as f:
@@ -93,7 +99,7 @@ def extreme_lookup_ip_live(ip: str) -> str:
     return contents
 
 
-def extreme_lookup_ip(ip: str) -> Dict[str, str]:
+def extreme_lookup_ip(ip: str) -> dict[str, str]:
     path = get_extreme_ip_lookup_path(ip)
     j = cached_or(path, lambda: extreme_lookup_ip_live(ip))
     return json.loads(j)
@@ -142,11 +148,14 @@ CERT = {
     "MT": ["securityoperations.mita@gov.mt"],
     "DK": ["cert@cert.dk"],
     "PL": ["cert@cert.pl"],
+    "FR": ["cert-fr.cossi@ssi.gouv.fr"],
+    "UA": ["cert@cert.gov.ua"],
+    "AR": ["ciberseguridad@ba-csirt.gob.ar"],
     # "": [""],
 }
 
 
-def cert_country(country: str) -> List[str] or None:
+def cert_country(country: str) -> list[str] or None:
     if country in CERT:
         return CERT[country]
 
@@ -159,7 +168,7 @@ def cert_country(country: str) -> List[str] or None:
 EMAIL_REGEX = r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)"
 
 
-def extract_abuse_emails(text: str) -> List[str]:
+def extract_abuse_emails(text: str) -> list[str]:
     emails = []
 
     extracted = re.findall(EMAIL_REGEX, text)
@@ -191,7 +200,7 @@ def perform_whois_live(ip: str) -> str:
     return text
 
 
-def get_abuse_emails(ip: str) -> List[str]:
+def get_abuse_emails(ip: str) -> list[str]:
     path = get_whois_path(ip)
     text = cached_or(path, lambda: perform_whois_live(ip))
     return extract_abuse_emails(text)
@@ -204,13 +213,13 @@ def get_abuse_emails(ip: str) -> List[str]:
 WHOIS_FIELDS = ["descr:", "netname:", "org-name:", "role:", "address:"]
 
 
-def get_whois_info(ip: str) -> Dict[str, List[str]]:
+def get_whois_info(ip: str) -> dict[str, list[str]]:
     path = get_whois_path(ip)
     text = cached_or(path, lambda: perform_whois_live(ip))
 
-    result: Dict[str, List[str]] = {}
+    result: dict[str, list[str]] = {}
 
-    lines: List[str] = text.split("\n")
+    lines: list[str] = text.split("\n")
     for line in lines:
         if not any(f in line for f in WHOIS_FIELDS):
             continue
@@ -233,15 +242,16 @@ IP_REGEXES = [re.compile(p) for p in [
 ]]
 
 
-def extract_ips(s: str) -> List[str]:
+def extract_ips(s: str) -> list[str]:
     nested = [x for x in (r.findall(s) for r in IP_REGEXES)]
     return list(set(itertools.chain.from_iterable(nested)))
 
 
 def is_public_ip(ip: str) -> bool:
     return ip != "127.0.0.1" \
-           and not ip.startswith("192.168") \
-           and not ip.startswith("10.0")
+           and not ip.startswith("192.168.") \
+           and not ip.startswith("10.") \
+           and not ip.startswith("172.16")
 
 
 def is_ipv4(ip: str) -> bool:
@@ -258,12 +268,17 @@ def header_contains_ip(k: str, v: str) -> bool:
            ("received" in k and "from" in v)
 
 
-def header_is_webmail(v: str) -> bool:
-    return "outlook.com" in v or "google.com" in v
-
-
 def is_spf_pass(k: str, v: str) -> bool:
     return "spf" in k and v.startswith("pass")
+
+
+def date_from_headers(headers: list[str]) -> str:
+    for [_, v] in headers:
+        if BY_SEPARATOR in v:
+            date = v.split(BY_SEPARATOR)[1].strip()
+            if len(date) > 0:
+                return date
+    return headers[0]
 
 
 #
@@ -282,11 +297,11 @@ V_BAR = "│"
 H_BAR = "─"
 
 
-def print_table(data: List[List[str]]) -> None:
+def print_table(data: list[list[str]]) -> None:
     if len(data) == 0:
         return None
 
-    lengths: Dict[int, int] = {}
+    lengths: dict[int, int] = {}
 
     for row in data:
         i = 0
@@ -324,7 +339,9 @@ def print_table(data: List[List[str]]) -> None:
     print(end_border)
 
 
-def print_dict(d: Dict[str, str or List[str]]) -> None:
+def format_dict(d: dict[str, str or list[str]]) -> str:
+    result = []
+
     pad = 0
     for k in d.keys():
         if (l := len(k)) > pad:
@@ -334,34 +351,91 @@ def print_dict(d: Dict[str, str or List[str]]) -> None:
 
     for k, v in d.items():
         key = "{0} ".format(k)
-        print("- {0} {1}".format(key.ljust(pad, "·"), v))
+        result += ["- {0} {1}".format(key.ljust(pad, "·"), v)]
+
+    return "\n".join(result)
 
 
 # https://theasciicode.com.ar/extended-ascii-code/box-drawing-character-single-line-lower-left-corner-ascii-code-192.html
-def print_title(s: str) -> None:
+def format_title(s: str) -> str:
+    result = []
+
     text = " {0} ".format(s).ljust(TITLE_SIZE, " ")
     size = max(TITLE_SIZE, len(text))
 
-    print()
-    print("╔{0}╗".format("═" * size))
-    print("║{0}║".format(text))
-    print("╚{0}╝".format("═" * size))
+    result += [""]
+    result += ["╔{0}╗".format("═" * size)]
+    result += ["║{0}║".format(text)]
+    result += ["╚{0}╝".format("═" * size)]
+
+    return "\n".join(result)
 
 
 # http://patorjk.com/software/taag/#p=display&f=ANSI%20Shadow&t=EML
-def print_intro() -> None:
-    print("""
+def build_intro() -> str:
+    return """
     ███████╗███╗   ███╗██╗     
     ██╔════╝████╗ ████║██║     
     █████╗  ██╔████╔██║██║     
     ██╔══╝  ██║╚██╔╝██║██║     
     ███████╗██║ ╚═╝ ██║███████╗
-    ╚══════╝╚═╝     ╚═╝╚══════╝""")
+    ╚══════╝╚═╝     ╚═╝╚══════╝"""
+
+
+def extract_domain(s: str) -> str or None:
+    if match := re.search('@([^>]+)', s, re.IGNORECASE):
+        return match.group(1)
+
+
+def highlight_domain(s: str) -> str:
+    if domain := extract_domain(s):
+        return s.replace(domain, color_red(domain))
+    return s
+
+
+#
+# color string
+#
+
+def color_grey(s: str or list[str]) -> str:
+    return color_with(s, Fore.LIGHTBLACK_EX)
+
+
+def color_green(s: str or list[str]) -> str:
+    return color_with(s, Fore.LIGHTGREEN_EX)
+
+
+def color_cyan(s: str or list[str]) -> str:
+    return color_with(s, Fore.LIGHTCYAN_EX)
+
+
+def color_red(s: str or list[str]) -> str:
+    return color_with(s, Fore.LIGHTRED_EX)
+
+
+def color_with(s: str or list[str], f: str) -> str:
+    return "{0}{1}{2}".format(f, str(s), Fore.RESET)
+
+
+#
+# type
+#
+
+class Hop:
+    ip: str
+    headers: list[str]
+    date: str
+
+    is_real: bool
+    has_spf: bool
+
+    formatter: Callable[[str], str]
 
 
 #
 # main routine
 #
+
 
 def main() -> None:
     #
@@ -377,7 +451,7 @@ def main() -> None:
         print("File is not a .txt file")
         exit(0)
 
-    print_intro()
+    print(color_green(build_intro()))
 
     #
     # state
@@ -388,8 +462,7 @@ def main() -> None:
 
     special_headers_google_apps = set()
 
-    sender_hops: OrderedDict[str, List[List[str]]] = OrderedDict()
-    webmail_hops = []
+    sender_hops: OrderedDict[str, list[list[str]]] = OrderedDict()
 
     #
     # parse file
@@ -407,17 +480,12 @@ def main() -> None:
 
             if header_contains_ip(k, v):
                 ips = extract_ips(v)
-                ips = list(filter(is_public_ip, ips))
 
                 if len(ips) == 0:
                     headers_false_positive.append([k, v])
                     continue
 
                 for ip in ips:
-                    # if header_is_webmail(v) and not is_ipv4(ip):
-                    #     webmail_hops.append([k, v])
-                    #     continue
-
                     if ip not in sender_hops:
                         sender_hops[ip] = []
                     sender_hops[ip].append([k, v])
@@ -429,120 +497,149 @@ def main() -> None:
                 else:
                     headers_true_negative.append(k)
 
-    # reversing IP order
-    sender_hops = OrderedDict(reversed(list(sender_hops.items())))
+    #
+    # reversing IP order to make it desc by time
+    #
+    sender_hops: OrderedDict[str, list[str]] = OrderedDict(reversed(list(sender_hops.items())))
 
     #
     # from
     #
-    print_title("From & Return-Path")
-    print_dict({f: m[f] for f in ["from", "return-path"]})
+    print(format_title("From & Return-Path"))
+    print(format_dict({f: highlight_domain(m[f]) for f in ["from", "return-path"]}))
 
     #
-    # IPs
+    # build hop entities
     #
 
-    if len(sender_hops) > 0:
-        print_title("IPs")
-        ip_dates: Dict[str, str] = {}
-        for [ip, headers] in sender_hops.items():
-            for [_, v] in headers:
-                if BY_SEPARATOR in v:
-                    date = v.split(BY_SEPARATOR)[1]
-                    ip_dates[ip] = date.strip()
-            if ip not in ip_dates:
-                ip_dates[ip] = headers
-        print_dict(ip_dates)
-
+    hops: list[Hop] = []
     for [ip, headers] in sender_hops.items():
-        if not is_ipv4(ip):
+        hop = Hop()
+        hop.ip = ip
+        hop.headers = headers
+        hop.date = date_from_headers(headers)
+
+        hop.has_spf = any(is_spf_pass(k, v) for [k, v] in headers)
+        hop.is_real = any(BY_SEPARATOR in v for [_, v] in headers)
+
+        hop.formatter = color_cyan
+        if hop.has_spf:
+            hop.formatter = color_green
+        if not hop.is_real or not is_public_ip(hop.ip) or not is_ipv4(ip):
+            hop.formatter = color_grey
+
+        hops.append(hop)
+
+    #
+    # print chain
+    #
+
+    if len(hops) > 0:
+        print(format_title("IP chain"))
+        ip_dates: dict[str, str] = {}
+        for hop in hops:
+            ip_dates[hop.formatter(hop.ip)] = hop.formatter(hop.date)
+        print(format_dict(ip_dates))
+
+    #
+    # print main hops
+    #
+
+    for hop in hops:
+        if not is_ipv4(hop.ip):
+            continue
+
+        if not is_public_ip(hop.ip):
             continue
 
         # flags
-        spf = any(is_spf_pass(k, v) for [k, v] in headers)
-        real = any(BY_SEPARATOR in v for [_, v] in headers)
 
         # title
-        title = ip
-        if spf:
+        title = hop.ip
+        if hop.has_spf:
             title = "{0} [SPF]".format(title)
-        if not real:
+        if not hop.is_real:
             title = "{0} [FORGED]".format(title)
-        print_title(title)
 
-        emails = set(get_abuse_emails(ip))
-        print_dict({
-            "TO": ', '.join(emails),
-            "IP": ip
-        })
+        print(hop.formatter(format_title(title)))
+
+        emails = set(get_abuse_emails(hop.ip))
+        print(format_dict({
+            color_red("TO"): ', '.join(emails),
+            color_red("IP"): hop.ip,
+            color_red("TS"): hop.date
+        }))
 
         # if IPV4, lookup API
-        if is_ipv4(ip):
-            lookup = extreme_lookup_ip(ip)
+        if is_ipv4(hop.ip):
+            lookup = extreme_lookup_ip(hop.ip)
 
             if "countryCode" in lookup:
                 cert = cert_country(lookup["countryCode"])
                 if cert is not None:
-                    print_dict({"CC": ', '.join(cert)})
+                    print(format_dict({"CC": ', '.join(cert)}))
 
             print()
             print("API [eXTReMe-IP-Lookup]:")
-            print_dict(lookup)
+            print(format_dict(lookup))
 
         # WHOIS info
-        whois = get_whois_info(ip)
+        whois = get_whois_info(hop.ip)
         if len(whois) > 0:
             print()
             print("WHOIS info:")
-            print_dict(whois)
+            print(format_dict(whois))
 
         # URLs with external resources
+        external: dict[str, str] = {}
+
+        if hop.has_spf:
+            if match := re.search("domain of (.*) designates", str(hop.headers), re.IGNORECASE):
+                spf_domain = match.group(1)
+                if "@" in spf_domain:
+                    spf_domain = spf_domain.split("@")[1]
+                external["whois"] = "https://mxtoolbox.com/SuperTool.aspx?action=whois%3a+{0}".format(spf_domain)
+                external["domain"] = "https://whois.domaintools.com/{0}".format(spf_domain)
+                external["blacklist"] = "https://mxtoolbox.com/SuperTool.aspx?action=blacklist%3a{0}".format(spf_domain)
+        external["IP"] = "https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(hop.ip)
+
         print()
         print("External resources:")
-        print("- https://anti-hacker-alliance.com/index.php?ip={0}&searching=yes".format(ip))
+        print(format_dict(external))
 
         # headers
         print()
         print("Headers:")
-        print_dict({k: v for [k, v] in headers})
-
-    #
-    # webmail hops
-    #
-    if len(webmail_hops) > 0:
-        print_title("Webmail hops")
-
-    for k, v in webmail_hops:
-        print("- {0} {1}".format(k, v))
+        print(format_dict({color_red(k): v for [k, v] in hop.headers}))
 
     #
     # Google App
     #
     if len(special_headers_google_apps) > 0:
-        print_title("SPECIAL :: Google app:")
+        print(format_title("SPECIAL :: Google app:"))
         print(special_headers_google_apps)
 
     #
     # false positives
     #
     if len(headers_false_positive) > 0:
-        print_title("False positive headers [{0}]".format(len(headers_false_positive)))
+        print(color_grey(format_title("False positive headers [{0}]".format(len(headers_false_positive)))))
         for k, v in headers_false_positive:
-            print("{0}: {1}".format(k, v))
+            print(color_grey("{0}: {1}".format(k, v)))
 
     #
     # false negatives
     #
     if len(headers_false_negative) > 0:
-        print_title("False negative headers [{0}]".format(len(headers_false_negative)))
-        print_dict({k: v for k, v in headers_false_negative})
+        print(color_grey(format_title("False negative headers [{0}]".format(len(headers_false_negative)))))
+        print(color_grey(format_dict({k: v for k, v in headers_false_negative})))
 
     #
     # true negatives
     #
     if len(headers_true_negative) > 0:
-        print_title("True negative headers: [{0}]".format(len(headers_true_negative)))
-        print(headers_true_negative)
+        print(color_grey(format_title("True negative headers: [{0}]".format(len(headers_true_negative)))))
+        print(color_grey(headers_true_negative))
 
 
 if __name__ == '__main__':
