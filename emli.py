@@ -1,3 +1,4 @@
+import base64
 import itertools
 import json
 import os
@@ -5,14 +6,36 @@ import re
 import subprocess
 import sys
 from collections import OrderedDict
+import datetime
 from email import message_from_string
+from email.message import Message
 from pathlib import Path
+import socket
 from typing import Generator, Callable
 from urllib import request
 import time
-from colorama import init, Fore, Back
+from urllib.parse import urlparse
+
+from colorama import init, Fore
+import dateutil.parser
 
 init(autoreset=True)
+
+
+#
+# type
+#
+
+class Hop:
+    ip: str
+    headers: list[str]
+    date_text: str
+    date: datetime
+
+    is_real: bool
+    has_spf: bool
+
+    formatter: Callable[[str], str]
 
 
 #
@@ -22,10 +45,14 @@ init(autoreset=True)
 # If your generator will only yield values, set the SendType and ReturnType to None
 #
 
-def parse_headers(text: str) -> Generator[tuple[str, str], None, None]:
+def extract_header_text(text: str) -> str:
     text = text.replace("\r", "")
     headers = text.split("\n\n")[0]
     headers = re.sub(r'\n[\s]+', ' ', headers)
+    return headers
+
+
+def parse_headers(headers: str) -> Generator[tuple[str, str], None, None]:
     lines = headers.split("\n")
 
     for line in lines:
@@ -86,8 +113,11 @@ def get_extreme_ip_lookup_path(ip: str) -> str:
 
 
 def get_whois_path(ip: str) -> str:
-    ip = ip.replace(":", "_")
-    return "{0}/{1}.txt".format(CACHE_DIR, ip)
+    return get_path(ip, "WHOIS")
+
+
+def get_path(ip: str, suffix: str) -> str:
+    return "{0}/{1}_[{2}].txt".format(CACHE_DIR, ip, suffix)
 
 
 #
@@ -207,6 +237,32 @@ def get_abuse_emails(ip: str) -> list[str]:
 
 
 #
+# DNS
+#
+
+def reverse_dns_live(ip: str) -> str or None:
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except socket.herror:
+        return None
+    except socket.gaierror:
+        return None
+
+
+def reverse_dns(ip: str) -> str or None:
+    path = get_path(ip, "RDNS")
+    return cached_or(path, lambda: str(reverse_dns_live(ip)))
+
+
+def get_ips(domain: str) -> list[str]:
+    try:
+        data = socket.gethostbyname_ex(domain)
+        return data[2]
+    except Exception:
+        return []
+
+
+#
 # WHOIS
 #
 
@@ -278,7 +334,16 @@ def date_from_headers(headers: list[str]) -> str:
             date = v.split(BY_SEPARATOR)[1].strip()
             if len(date) > 0:
                 return date
-    return headers[0]
+    return str(headers[0])
+
+
+def datetime_from_date(s: str) -> datetime or None:
+    try:
+        return dateutil.parser \
+            .parse(s, fuzzy=True) \
+            .astimezone(datetime.timezone.utc)
+    except ValueError:
+        return None
 
 
 #
@@ -297,6 +362,13 @@ V_BAR = "│"
 H_BAR = "─"
 
 
+def remove_printable(s: str) -> str:
+    result = "{0}".format(s)
+    for r in list(Fore.__dict__.values()):
+        result = result.replace(r, '')
+    return result
+
+
 def print_table(data: list[list[str]]) -> None:
     if len(data) == 0:
         return None
@@ -308,7 +380,8 @@ def print_table(data: list[list[str]]) -> None:
         for cell in row:
             row[i] = cell = " {0} ".format(cell)
 
-            length = len(cell)
+            length = len(remove_printable(cell))
+
             if i not in lengths:
                 lengths[i] = length
             else:
@@ -325,9 +398,17 @@ def print_table(data: list[list[str]]) -> None:
     i = 0
     for row in data:
         cells = {k: v for k, v in enumerate(row)}
+
+        def fill_padding(k: int) -> str:
+            content = cells[k]
+            content_clean = remove_printable(cells[k])
+            return content_clean \
+                .ljust(lengths[k]) \
+                .replace(content_clean, content)
+
         draw = "{0}{1}{2}".format(
             V_BAR,
-            V_BAR.join(map(lambda k: cells[k].ljust(lengths[k]), cells.keys())),
+            V_BAR.join(map(fill_padding, cells.keys())),
             V_BAR
         )
         print(draw)
@@ -393,6 +474,23 @@ def highlight_domain(s: str) -> str:
     return s
 
 
+def human_readable_date(date: datetime or None) -> str:
+    if date is None:
+        return "N/A"
+    else:
+        return date \
+            .isoformat() \
+            .replace("T", " / ") \
+            .replace("+00:00", "")
+
+
+def date_difference(hop: Hop, prev_hop: Hop) -> str:
+    diff = "N/A"
+    if hop.date is not None and prev_hop is not None and prev_hop.date is not None:
+        diff = hop.date - prev_hop.date
+    return diff
+
+
 #
 # color string
 #
@@ -413,23 +511,56 @@ def color_red(s: str or list[str]) -> str:
     return color_with(s, Fore.LIGHTRED_EX)
 
 
+def color_magenta(s: str or list[str]) -> str:
+    return color_with(s, Fore.LIGHTMAGENTA_EX)
+
+
 def color_with(s: str or list[str], f: str) -> str:
     return "{0}{1}{2}".format(f, str(s), Fore.RESET)
 
 
 #
-# type
+# extract links
 #
 
-class Hop:
-    ip: str
-    headers: list[str]
-    date: str
+link_regex = re.compile('((https?):([^<\n\r\s"]+)*)', re.DOTALL)
 
-    is_real: bool
-    has_spf: bool
 
-    formatter: Callable[[str], str]
+def extract_links(s: str) -> list[str]:
+    # link_regex = re.compile('((https?):((//)|(\\\\))+([\w\d:#@%/;$()~_?+-=\\\.&](#!)?)*)', re.DOTALL)
+    matches = re.findall(link_regex, s)
+    links = [m[0] for m in matches]
+    return sorted(set(links))
+
+
+#
+# email body
+#
+
+def plaintext(s: str) -> str:
+    try:
+        decoded = base64.b64decode(s).decode("utf-8")
+        return decoded
+    except Exception:
+        return s
+
+
+def extract_body(m: Message) -> str:
+    ps = []
+    if m.is_multipart():
+        for payload in m.get_payload():
+            p = payload.get_payload()
+            ps.append(p)
+    else:
+        p = m.get_payload()
+        ps.append(p)
+
+    r = [plaintext(p).replace("=\n", "") for p in ps]
+    return "\n".join(r)
+
+
+def get_domain(u: str) -> str:
+    return urlparse(u).netloc
 
 
 #
@@ -459,9 +590,7 @@ def main() -> None:
     headers_true_negative = []
     headers_false_negative = []
     headers_false_positive = []
-
     special_headers_google_apps = set()
-
     sender_hops: OrderedDict[str, list[list[str]]] = OrderedDict()
 
     #
@@ -469,9 +598,13 @@ def main() -> None:
     #
     with open(file=filepath, encoding="latin-1", mode="r") as fp:
         data = fp.read()
-        m = message_from_string(data)
 
-        for k, v in parse_headers(data):
+        header_text = extract_header_text(data)
+        m = message_from_string(data)
+        b = extract_body(m)
+        text = header_text + b
+
+        for k, v in parse_headers(header_text):
             v = re.sub(r' by .*;', BY_SEPARATOR, v).strip()
 
             google_app = re.compile('=([^=]*.gappssmtp.com)').findall(v)
@@ -517,7 +650,8 @@ def main() -> None:
         hop = Hop()
         hop.ip = ip
         hop.headers = headers
-        hop.date = date_from_headers(headers)
+        hop.date_text = date_from_headers(headers)
+        hop.date = datetime_from_date(hop.date_text)
 
         hop.has_spf = any(is_spf_pass(k, v) for [k, v] in headers)
         hop.is_real = any(BY_SEPARATOR in v for [_, v] in headers)
@@ -536,10 +670,23 @@ def main() -> None:
 
     if len(hops) > 0:
         print(format_title("IP chain"))
-        ip_dates: dict[str, str] = {}
+
+        prev_hop = None
+        table = [["IP", "Date (UTC)", "Time from prev", "Date (str)"]]
         for hop in hops:
-            ip_dates[hop.formatter(hop.ip)] = hop.formatter(hop.date)
-        print(format_dict(ip_dates))
+            diff = date_difference(hop, prev_hop)
+            row = [
+                hop.ip,
+                human_readable_date(hop.date),
+                diff,
+                hop.date_text
+            ]
+            row = list(map(hop.formatter, row))
+            table.append(row)
+
+            prev_hop = hop
+
+        print_table(table)
 
     #
     # print main hops
@@ -556,6 +703,10 @@ def main() -> None:
 
         # title
         title = hop.ip
+        if host := reverse_dns(hop.ip):
+            if str(host) != "None":
+                title = "{0} / {1}".format(title, host)
+
         if hop.has_spf:
             title = "{0} [SPF]".format(title)
         if not hop.is_real:
@@ -567,7 +718,7 @@ def main() -> None:
         print(format_dict({
             color_red("TO"): ', '.join(emails),
             color_red("IP"): hop.ip,
-            color_red("TS"): hop.date
+            color_red("TS"): hop.date_text
         }))
 
         # if IPV4, lookup API
@@ -577,7 +728,7 @@ def main() -> None:
             if "countryCode" in lookup:
                 cert = cert_country(lookup["countryCode"])
                 if cert is not None:
-                    print(format_dict({"CC": ', '.join(cert)}))
+                    print(format_dict({color_red("CC"): ', '.join(cert)}))
 
             print()
             print("API [eXTReMe-IP-Lookup]:")
@@ -640,6 +791,31 @@ def main() -> None:
     if len(headers_true_negative) > 0:
         print(color_grey(format_title("True negative headers: [{0}]".format(len(headers_true_negative)))))
         print(color_grey(headers_true_negative))
+
+    #
+    # body parse
+    #
+    ls = extract_links(text)
+
+    for domain, us in itertools.groupby(ls, get_domain):
+        urls = list(us)
+        ips = get_ips(domain)
+
+        print(color_magenta(format_title(domain)))
+
+        print("URL(s) [{0}]".format(color_magenta(len(urls))))
+        for url in urls:
+            u = domain.join([color_grey(p) for p in url.split(domain)])
+            print("- {0}".format(u))
+
+        print()
+        print("IP(s) [{0}]".format(color_magenta(len(ips))))
+        d = {}
+        for ip in ips:
+            emails = set(get_abuse_emails(ip))
+            k = "{0} / {1}".format(ip, domain)
+            d[k] = ', '.join(emails)
+        print(format_dict(d))
 
 
 if __name__ == '__main__':
